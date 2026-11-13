@@ -1,0 +1,67 @@
+name: Informe Meta Ads
+
+on:
+  schedule:
+    # GitHub usa hora UTC. Ecuador es UTC-5 todo el año.
+    - cron: "5 13-23 * * 1-5"   # lunes a viernes, cada hora de 08:05 a 18:05
+    - cron: "40 19 * * 1"       # lunes 14:40, antes de la reunión de las 15:00
+    - cron: "10 16 * * 4"       # jueves 11:10, antes de la reunión de las 11:30
+  workflow_dispatch:            # botón "Run workflow" para generarlo en el momento
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  informe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # Mientras falten los secretos, el cron termina sin error (y sin correos de fallo).
+      # Una ejecución manual sí sigue adelante y muestra qué secreto falta.
+      - name: Comprobar secretos
+        id: secretos
+        env:
+          HAY_TOKEN: ${{ secrets.META_ACCESS_TOKEN != '' }}
+          HAY_CUENTA: ${{ secrets.META_AD_ACCOUNT_ID != '' }}
+          HAY_CLAVE: ${{ secrets.REPORT_PASSWORD != '' }}
+        run: |
+          if [ "$HAY_TOKEN" = "true" ] && [ "$HAY_CUENTA" = "true" ] && [ "$HAY_CLAVE" = "true" ]; then
+            echo "listo=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "listo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "listo=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Faltan secretos del repositorio; no se generó el informe."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.secretos.outputs.listo == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.secretos.outputs.listo == 'true'
+        with:
+          node-version: 22
+      - name: Generar informe
+        if: steps.secretos.outputs.listo == 'true'
+        run: node scripts/generar.mjs
+        env:
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
+          REPORT_PASSWORD: ${{ secrets.REPORT_PASSWORD }}
+          META_API_VERSION: ${{ vars.META_API_VERSION }}
+      - uses: actions/configure-pages@v5
+        if: steps.secretos.outputs.listo == 'true'
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.secretos.outputs.listo == 'true'
+        with:
+          path: site
+      - id: deployment
+        if: steps.secretos.outputs.listo == 'true'
+        uses: actions/deploy-pages@v4
